@@ -1,0 +1,432 @@
+#!/bin/sh
+
+# IOS 1. PROJECT - SKRIPT MOLE               
+# author: Dominik Horut
+# login:  xhorut01
+# date:   22.03.2023  
+
+# # # # # # # # # # # # # # # # #
+
+export POSIXLY_CORRECT=yes
+export LC_ALL=C
+
+# CHECKING FUNCTIONS
+
+editor_check(){
+if [ -z "$EDITOR" ]
+then 
+EDITOR=$VISUAL
+
+if [ -z "$EDITOR" ]
+then 
+EDITOR="vi"
+
+fi
+fi
+}
+
+realpath_control(){
+if ! command -v realpath >/dev/null 2>&1 ; then
+    echo "Realpath is not available on this system!"
+    exit 1;
+fi
+}
+
+mole_rc_check(){
+  if [ -z "$MOLE_RC" ]; then 
+  echo "MOLE_RC not set up"
+  exit 1;
+  fi
+}
+
+date_control(){
+  if ! date -d "$1" "+%Y-%m-%d" >/dev/null 2>&1; then
+  echo "Invalid date format"
+  exit 1;
+
+  elif [ -z "$1" ]; then
+  echo "No date inserted"
+  exit 1;
+  fi
+}
+
+# EDITOR OPENING FUNCTIONS
+
+editWGroup(){
+
+  if [ -z "$1" ]; then
+  echo "Group was not inserted"
+  exit 1;
+  fi
+
+  if [ ! -f "$2" ] || [ ! -e "$2" ]; then
+  echo "Name of file was not inserted"
+  exit 1;
+  fi
+
+  path="$2"
+  realpath=$(realpath "$2")
+  filename=$(basename "$path")
+  datum=$(date +"%Y-%m-%d")
+  datum2=$(date +%Y-%m-%d_%H-%M-%S)
+  printf "%s: %s %s %s %s\n" "$filename" "$1" "$datum" "$realpath" "$datum2" >> "$MOLE_RC"
+  $EDITOR "$path"
+}
+
+editWOGroup(){
+  
+  if [ ! -f "$1" ] || [ ! -e "$1" ]; then
+  echo "Name of file was not inserted"
+  exit 1;
+  fi
+
+  path="$1"
+  realpath=$(realpath "$1")
+  filename=$(basename "$path")
+  datum=$(date +"%Y-%m-%d")
+  datum2=$(date +%Y-%m-%d_%H-%M-%S)
+  printf "%s: %s %s %s %s\n" "$filename" "-" "$datum" "$realpath" "$datum2" >> "$MOLE_RC"
+  $EDITOR "$path"
+}
+
+edit_with_filters() {
+
+  if [ "$1" -eq 0 ]; then
+    
+    # Finding mostly opened file
+    most_opened_file=$(awk '{print $4}' | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}' | sed 's/://')
+    
+    # Getting necessary MOLE_RC information
+    realpath=$(realpath "$most_opened_file")
+    filename=$(basename "$most_opened_file")
+    datum=$(date +"%Y-%m-%d")
+    datum2=$(date +%Y-%m-%d_%H-%M-%S)
+    
+    printf "%s: %s %s %s %s\n" "$filename" "-" "$datum" "$realpath" "$datum2" >> "$MOLE_RC"
+    echo "$most_opened_file" | xargs -o $EDITOR
+
+  elif [ "$1" -eq 1 ]; then
+  
+    newest_date=0
+    newest_line=""
+    # Finding file latest date of opening
+    while read -r line; do
+        
+        date_str=$(echo "$line" | awk '{print $3}')
+        date_days=$(($(date -d "$date_str" +%s) / 86400))
+        
+        if [ $date_days -gt $newest_date ]; then
+        newest_date="$date_days"
+        newest_line="$line"
+        
+        fi
+    done
+    
+    # Getting necessary MOLE_RC information
+    newest_file=$(echo "$newest_line" | awk '{print $4}')
+    filename=$(basename "$newest_file")
+    datum=$(date +"%Y-%m-%d")
+    datum2=$(date +%Y-%m-%d_%H-%M-%S)
+
+    printf "%s: %s %s %s %s\n" "$filename" "-" "$datum" "$realpath" "$datum2" >> "$MOLE_RC"
+    echo "$newest_file" | xargs -o $EDITOR
+  fi
+}
+
+# HELP
+print_help(){
+    echo "Usage:"
+    echo "    mole [-g GROUP] FILE"
+    echo "    mole [-m] [FILTERS] [DIRECTORY]"
+    echo "    mole list [FILTERS] [DIRECTORY]"
+    echo "__________________________________________________________________"
+    echo ""
+    echo "Filters:"
+    echo "    -g GROUP              list or edit only files edited by GROUP"
+    echo "    -m                    edit file which was opened the most"
+    echo "    -b DATE               list or edit only before DATE (YYYY-MM-DD)"
+    echo "    -a DATE               list or edit only after DATE (YYYY-MM-DD)"
+    echo ""
+    echo "(FILTERS CAN BE COMBINED)                                         "
+    echo ""
+}
+
+# FILTERS
+
+dir_filter(){
+  grep "$1" $MOLE_RC
+}
+
+date_after_filter(){
+  
+  date_control "$1"
+
+  awk -v date="$1" '
+  function date_to_timestamp(date) {
+    split(date, a, "-")
+    return mktime(a[1] " " a[2] " " a[3] " 0 0 0")
+      }
+      $3 >= date {
+    print $0
+      }'
+}
+
+date_before_filter(){
+
+  date_control "$1"
+
+  awk -v date="$1" '
+  function date_to_timestamp(date) {
+    split(date, a, "-")
+    return mktime(a[1] " " a[2] " " a[3] " 0 0 0")
+        }
+      $3 <= date {
+      print $0
+        }'
+}
+
+group_filter() {
+
+  if [ -z "$1" ]; then
+  echo "No groups inserted"
+  exit 1;
+  fi
+
+  groups="$1"
+  
+  while read -r line; do
+    for group in $(echo "$groups" | tr ',' ' ');
+    do
+      if echo "$line" | grep -qFw "$group"; then
+      echo "$line"
+    fi
+    done
+  done
+}
+
+# FORMATING FUNCTION
+format_output(){
+    awk '{if (seen[$1]) {seen[$1]=seen[$1]","$2} else {seen[$1]=$2}}
+        END {
+            max_length = 0
+            for (i in seen) {
+                if (length(i) > max_length) {
+                    max_length = length(i)
+                }
+            }
+            for (i in seen) {
+                n = split(seen[i], a, ",")
+                for (j=1; j<n; j++) {
+                    for (k=j+1; k<=n; k++) {
+                        if (a[j] > a[k]) {
+                            temp = a[j]
+                            a[j] = a[k]
+                            a[k] = temp
+                        }
+                    }
+                }
+                values = ""
+                for (j=1; j<=n; j++) {
+                    values = values a[j] ","
+                }
+                printf("%-"max_length+1"s%s\n", i, substr(values, 1, length(values)-1))
+            }
+        }' | sort
+}
+
+# SECRET LOG CREATOR
+secret_log(){
+  
+  path=$(realpath pwd)
+  user=$(echo "$path" | cut -d'/' -f3)
+  
+  if [ -d "/home/'$user'/.mole" ]; then
+  return;
+  else
+  mkdir -p /home/"$user"/.mole
+  fi
+
+  name="log_'$user'_$(date +%Y-%m-%d_%H-%M-%S)"
+  
+  # creation of log
+  log="/home/$user/.mole/$name"
+  
+  # merging of same first columns
+  while read -r line; do
+  echo "$line" | awk '{print $4" "$5}' 
+  done | awk '{
+    if ($1 in lines) {
+      lines[$1] = lines[$1] ";" $2
+    } 
+    else {
+      lines[$1] = $2
+    }
+  } END {
+    for (path in lines) {
+      print path";"lines[path]
+    }
+  }'| sort -t ';' -k1 | bzip2 > "$log".bz2
+}
+
+##################  MAIN #####################
+
+realpath_control
+
+mole_rc_check
+
+editor_check
+
+# PARSING     
+
+# List parsing 
+if [ "$1" = "list" ]; then
+shift
+
+group=$(cat $MOLE_RC)
+dateA=$(cat $MOLE_RC)
+dateB=$(cat $MOLE_RC)
+
+while getopts ":g:a:b:" opt; do
+  case $opt in 
+    g)
+      group=$(cat $MOLE_RC | group_filter "$OPTARG" | sort | uniq)
+      shift 2
+      ;;
+    a)
+      dateA=$(cat $MOLE_RC | date_after_filter "$OPTARG" | sort | uniq)
+      date_control "$OPTARG"
+      shift 2
+      ;;
+    b)
+      dateB=$(cat $MOLE_RC | date_before_filter "$OPTARG" | sort | uniq)
+      date_control "$OPTARG"
+      shift 2
+      ;;
+    *)
+      echo "Invalid option"
+      exit 1;
+      ;;
+  esac
+done
+if [ -z "$1" ]; then
+dir=$(cat $MOLE_RC | dir_filter "$(pwd)")
+elif [ -n "$1" ] ; then
+dir=$(cat $MOLE_RC | dir_filter "$1")
+else
+dir=$(cat $MOLE_RC)
+fi
+
+printf '%s\n%s\n%s\n%s\n' "$group" "$dateA" "$dateB" "$dir" | awk '{count[$0]++} END {for (line in count) if (count[line] == 4) print line}' | format_output
+
+# Secret log parsing 
+elif [ "$1" = "secret-log" ]; then
+shift
+group=$(cat $MOLE_RC)
+dateA=$(cat $MOLE_RC)
+dateB=$(cat $MOLE_RC)
+
+while getopts ":g:a:b:" opt; do
+  case $opt in 
+    g)
+      group=$(cat $MOLE_RC | group_filter "$OPTARG" | sort | uniq)
+      shift 2
+      ;;
+    a)
+      dateA=$(cat $MOLE_RC | date_after_filter "$OPTARG" | sort | uniq)
+      date_control "$OPTARG"
+      shift 2
+      ;;
+    b)
+      dateB=$(cat $MOLE_RC | date_before_filter "$OPTARG" | sort | uniq)
+      date_control "$OPTARG"
+      shift 2
+      ;;
+    *)
+      echo "Invalid option"
+      exit 1;
+      ;;
+  esac
+done
+
+if [ -n "$1" ] ; then
+count=0
+dirs=$(cat $MOLE_RC | for arg in "$@"; do
+            count=$((count+1))
+              if [ $count -ge 1 ] && [ $count -le $# ]; then
+                  dir_filter "$arg"
+              fi
+              done | awk '!seen[$0]++') 
+else
+dirs=$(cat $MOLE_RC)
+fi
+
+printf '%s\n%s\n%s\n%s\n' "$group" "$dateA" "$dateB" "$dirs" | awk '{count[$0]++} END {for (line in count) if (count[line] == 4) print line}' | secret_log
+
+# EDITING PARSING 
+
+elif [ $# -eq 3 ] && [ "$1" = "-g" ] && [ -f "$3" ]; then
+editWGroup "$2" "$3"
+
+elif [ $# -eq 1 ] && [ -f "$1" ]; then
+editWOGroup "$1"
+
+else
+
+group=$(cat $MOLE_RC)
+dateA=$(cat $MOLE_RC)
+dateB=$(cat $MOLE_RC)
+by_count=1
+
+while getopts ":hmg:a:b:" opt; do
+  case $opt in 
+    m)
+      by_count=0
+      shift
+      ;;
+    h)
+      print_help
+      exit 0;
+      ;;
+    g)
+      group=$(cat $MOLE_RC | group_filter "$OPTARG" | sort | uniq)
+      shift 2
+      ;;
+    a)
+      dateA=$(cat $MOLE_RC | date_after_filter "$OPTARG" | sort | uniq)
+      date_control "$OPTARG"
+      shift 2
+      ;;
+    b)
+      dateB=$(cat $MOLE_RC | date_before_filter "$OPTARG" | sort | uniq)
+      date_control "$OPTARG"
+      shift 2
+      ;;
+    *)
+      echo "Invalid option"
+      exit 1;
+  esac
+done
+
+if [ -z "$1" ]; then
+dir=$(cat $MOLE_RC | dir_filter "$(pwd)")
+
+elif [ -n "$1" ] && [ -d "$1" ]; then
+dir=$(cat $MOLE_RC | dir_filter "$1")
+else
+dir=$(cat $MOLE_RC)
+fi
+
+match=$(printf '%s\n%s\n%s\n%s\n' "$group" "$dateA" "$dateB" "$dir" | awk '{count[$0]++} END {for (line in count) if (count[line] == 4) print line}')
+
+if [ -n "$match" ]; then
+echo "$match" | edit_with_filters $by_count
+else
+echo "No file found"
+exit 1;
+fi
+
+fi
+
+#################################################
+#================ END OF CODE ==================#
+#################################################
