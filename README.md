@@ -1,5 +1,5 @@
 # IOS
 
-* 1. Project - shell script (MOLE script)
+* Project 1 - shell script (MOLE script)
 
-* 2. Project - multi-process programming (Post office - Barbershop problem alternative)
+* Project 2 - multi-process programming (Post office - Barbershop problem alternative)
